@@ -1,2 +1,4 @@
 # winbash
-A bash-like shell for windows systems.
+----
+
+## A Bash-like experience on Windows systems.
