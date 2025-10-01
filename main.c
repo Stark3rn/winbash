@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "help.h"
+
 #ifdef _WIN32
 #define OS "WINDOWS"
 #include <windows.h>
@@ -20,17 +22,18 @@
 
 
 char cwd[MAX_PATH];
-
+char *ENV_HOME;
 
 // ==== BUILTIN COMMANDES ==== //
 
 
 int shell_cd(char **args) {
     if(!args[1]) {
-        fprintf(stderr, "\033[31mERREUR : Aucun chemin spécifié.\033[0m\n");
-        return(EXIT_SHELL_ERROR);
+        if (!SetCurrentDirectory(ENV_HOME)) {
+            fprintf(stderr, "\033[31mERREUR : %s n'est pas un chemin valide.\033[0m\n", ENV_HOME);
+        return EXIT_SHELL_ERROR;
     }
-    if (!SetCurrentDirectory(args[1])) {
+    } else if (!SetCurrentDirectory(args[1])) {
         fprintf(stderr, "\033[31mERREUR : %s n'est pas un chemin valide.\033[0m\n", args[1]);
         return EXIT_SHELL_ERROR;
     }
@@ -58,23 +61,66 @@ int shell_cat(char **args) {
     return EXIT_SHELL_SUCCESS;
 }
 
+int shell_echo(char **args) {
+    if(!args[1]) {
+        fprintf(stderr,"\033[31mERREUR : il faut entrer des arguments.\033[0m\n");
+        return(EXIT_SHELL_ERROR);
+    }
+    if(!args[2]) {
+        printf("%s\n",args[1]);
+        return(EXIT_SHELL_SUCCESS);
+    }
+    if(strcmp(">",args[2])==0) {
+        FILE *f=fopen(args[3],"w");
+        if(!f) {
+            fprintf(stderr,"\033[31mERREUR : impossible d'ouvrir %s\033[0m\n",args[3]);
+            return EXIT_SHELL_ERROR;
+        }
+        fprintf(f,args[1]);
+        fclose(f);
+        return(EXIT_SHELL_SUCCESS);
+    }
+    if(strcmp(">>",args[2])==0) {
+        FILE *f=fopen(args[3],"a");
+        if(!f) {
+            fprintf(stderr,"\033[31mERREUR : impossible d'ouvrir %s\033[0m\n",args[3]);
+            return EXIT_SHELL_ERROR;
+        }
+        fprintf(f,"\n%s",args[1]);
+        fclose(f);
+        return(EXIT_SHELL_SUCCESS);
+    }
+    return(EXIT_SHELL_ERROR);
+}
+
 int shell_exit(char **args) {
     return EXIT_SHELL_FAILURE; // Indique qu'on quitte
 }
 
 int shell_help(char **args) {
-    printf("Stash (%s) - Commandes intégrées :\n", OS);
-    printf("  cd       : Change de répertoire\n");
-    printf("  cat      : Lit un fichier\n");
-    printf("  exit     : Quitte le shell\n");
-    printf("  help     : Affiche cette aide\n");
-    printf("  ls       : Affiche la liste des fichiers\n");
-    printf("  pwd      : Affiche le répertoire courant\n");
+    if(!args[1]) {  
+        printf("Stash (%s) - Commandes intégrées :\n", OS);
+        printf("  cd       : Change de répertoire\n");
+        printf("  cat      : Lit un fichier\n");
+        printf("  echo     : Ecrit un message\n");
+        printf("  exit     : Quitte le shell\n");
+        printf("  help     : Affiche cette aide\n");
+        printf("  ls       : Affiche la liste des fichiers\n");
+        printf("  pwd      : Affiche le répertoire courant\n");
+    } else if (strcmp(args[1],"cd")==0) {
+        help_cd();
+    } else if (strcmp(args[1],"cat")==0) {
+        help_cat();
+    } else {
+        fprintf(stderr,"\033[31mERREUR : '%s' -> Pas une commande valide ou aide non existante.\033[0m\n",args[1]);
+        return(EXIT_SHELL_ERROR);
+    }
     return EXIT_SHELL_SUCCESS;
 }
 
 int shell_ls(char **args) {
-    WIN32_FIND_DATA findFileData;
+    if(strcmp(OS,"WINDOWS")==0) {
+        WIN32_FIND_DATA findFileData;
     HANDLE hFind;
 
     char searchPath[MAX_PATH];
@@ -103,6 +149,7 @@ int shell_ls(char **args) {
 
     printf("\n");
     return(EXIT_SHELL_SUCCESS);
+    }
 }
 
 int shell_pwd(char **args) {
@@ -114,6 +161,7 @@ int shell_pwd(char **args) {
 char *builtin_str[] = {
     "cd",
     "cat",
+    "echo",
     "exit",
     "help",
     "ls",
@@ -133,6 +181,8 @@ int shell_execute_builtin(char **args) {
         return shell_cd(args);
     } else if (strcmp(args[0], "cat") == 0) {
         return shell_cat(args);
+    } else if (strcmp(args[0], "echo") == 0) {
+        return shell_echo(args);
     } else if (strcmp(args[0], "exit") == 0) {
         return EXIT_SHELL_FAILURE; // Stop loop
     } else if (strcmp(args[0], "help") == 0) {
@@ -289,6 +339,15 @@ void shell_loop(void) {
     } while (status);
 }
 
+void load_env() {
+    if(strcmp(OS,"LINUX")==0) {
+        ENV_HOME = getenv("HOME");
+    } else {
+        ENV_HOME = getenv("USERPROFILE");
+    }
+
+    
+}
 
 // ==== MAIN ==== //
 int main() {
@@ -296,7 +355,7 @@ int main() {
     #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
     #endif
-
+    load_env();
     printf("\033[1;32mBienvenue dans Stash ! Tapez 'help' pour commencer.\033[0m\n");
     shell_loop();
     return 0;
