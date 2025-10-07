@@ -5,5 +5,6 @@
 #define EXIT_SHELL_SUCCESS  0
 #define EXIT_SHELL_ERROR    1
 #define EXIT_SHELL_FAILURE  2
+#define MAX_PATH 260
 
 #endif

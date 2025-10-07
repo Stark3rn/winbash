@@ -100,7 +100,7 @@ int shell_echo(char **args) {
             fprintf(stderr,"\033[31mERREUR : impossible d'ouvrir %s\033[0m\n",args[3]);
             return EXIT_SHELL_ERROR;
         }
-        fprintf(f,args[1]);
+        fprintf(f,"%s",args[1]);
         fclose(f);
         return(EXIT_SHELL_SUCCESS);
     }
