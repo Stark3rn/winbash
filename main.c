@@ -4,21 +4,32 @@
 
 #include "help.h"
 
+// WINDOWS INCLUDES
 #ifdef _WIN32
+
 #define OS "WINDOWS"
 #include <windows.h>
 #include <fcntl.h>
 #include <io.h>
-#endif
-#ifdef __unix__
-#define OS "UNIX"
-#include <unistd.h>
+
 #endif
 
-#define SHELL_BUFFSIZE 1024
-#define EXIT_SHELL_SUCCESS  0
-#define EXIT_SHELL_ERROR    1
-#define EXIT_SHELL_FAILURE  2
+// UNIX INCLUDES
+#ifdef __unix__
+
+#define OS "UNIX"
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <errno.h>
+#include <pwd.h>
+#include <fcntl.h>
+
+#endif
+
+#include "consts.h"
 
 
 char cwd[MAX_PATH];
@@ -28,6 +39,7 @@ char *ENV_HOME;
 
 
 int shell_cd(char **args) {
+#ifdef _WIN32
     if(!args[1]) {
         if (!SetCurrentDirectory(ENV_HOME)) {
             fprintf(stderr, "\033[31mERREUR : %s n'est pas un chemin valide.\033[0m\n", ENV_HOME);
@@ -38,6 +50,18 @@ int shell_cd(char **args) {
         return EXIT_SHELL_ERROR;
     }
     return(EXIT_SHELL_SUCCESS);
+# else
+    if (!args[1]) {
+        if (chdir(ENV_HOME) != 0) {
+            perror("cd");
+            return EXIT_SHELL_ERROR;
+        }
+    } else if (chdir(args[1]) != 0) {
+        perror("cd");
+        return EXIT_SHELL_ERROR;
+    }
+    return EXIT_SHELL_SUCCESS;
+#endif
 }
 
 int shell_cat(char **args) {
@@ -111,6 +135,16 @@ int shell_help(char **args) {
         help_cd();
     } else if (strcmp(args[1],"cat")==0) {
         help_cat();
+    } else if (strcmp(args[1],"echo")==0) {
+        help_echo();
+    } else if (strcmp(args[1],"exit")==0) {
+        help_exit();
+    } else if (strcmp(args[1],"help")==0) {
+        help_help();
+    } else if (strcmp(args[1],"ls")==0) {
+        help_ls();
+    } else if (strcmp(args[1],"pwd")==0) {
+        help_pwd();
     } else {
         fprintf(stderr,"\033[31mERREUR : '%s' -> Pas une commande valide ou aide non existante.\033[0m\n",args[1]);
         return(EXIT_SHELL_ERROR);
@@ -119,26 +153,47 @@ int shell_help(char **args) {
 }
 
 int shell_ls(char **args) {
-    if(strcmp(OS,"WINDOWS")==0) {
-        WIN32_FIND_DATA findFileData;
-    HANDLE hFind;
+    int showHidden = 0;
+    int i = 1;
+    char path[255];
+    strcpy(path, ".");
 
-    char searchPath[MAX_PATH];
-    if(!args[1]) {
-        snprintf(searchPath, MAX_PATH, ".\\*");
-    } else {
-        snprintf(searchPath, MAX_PATH, "%s\\*", args[1]);
+    while (args[i]) {
+        int j = 0;
+        if (args[i][j] == '-') {
+            while (args[i][j] != '\0') {
+                if (args[i][j] == 'h') {
+                    showHidden = 1;
+                }
+                j++;
+            }
+        } else if (strcmp(args[i], ">") == 0 || strcmp(args[i], "<") == 0 || strcmp(args[i], "|") == 0) {
+            break;
+        } else {
+            strcpy(path, args[i]);
+        }
+        i++;
     }
-    
+
+#ifdef _WIN32
+    // ===== Windows version =====
+    WIN32_FIND_DATA findFileData;
+    HANDLE hFind;
+    char searchPath[MAX_PATH];
+
+    snprintf(searchPath, MAX_PATH, "%s\\*", path);
     hFind = FindFirstFile(searchPath, &findFileData);
 
     if (hFind == INVALID_HANDLE_VALUE) {
-        fprintf(stderr,"\033[31mERREUR : impossible d'ouvrir le répertoire %s\033[0m\n", searchPath);
-        return(EXIT_SHELL_ERROR);
+        fprintf(stderr, "\033[31mERREUR : impossible d'ouvrir le répertoire %s\033[0m\n", searchPath);
+        return EXIT_SHELL_ERROR;
     }
 
     do {
         if (strcmp(findFileData.cFileName, ".") != 0 && strcmp(findFileData.cFileName, "..") != 0) {
+            int isHidden = (findFileData.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN);
+            if (!showHidden && isHidden) continue;
+
             if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
                 printf("\033[36m'%s'\033[0m\t", findFileData.cFileName);
             } else {
@@ -147,9 +202,29 @@ int shell_ls(char **args) {
         }
     } while (FindNextFile(hFind, &findFileData) != 0);
 
+    FindClose(hFind);
     printf("\n");
-    return(EXIT_SHELL_SUCCESS);
+    return EXIT_SHELL_SUCCESS;
+
+#else
+    // ===== UNIX version =====
+    DIR *dir = opendir(path);
+    if (!dir) {
+        fprintf(stderr, "\033[31mERREUR : impossible d'ouvrir le répertoire %s\033[0m\n", path);
+        return EXIT_SHELL_ERROR;
     }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (!showHidden && entry->d_name[0] == '.') {
+            continue;
+        }
+        printf("'%s'\t", entry->d_name);
+    }
+    closedir(dir);
+    printf("\n");
+    return EXIT_SHELL_SUCCESS;
+#endif
 }
 
 int shell_pwd(char **args) {
@@ -198,6 +273,7 @@ int shell_execute_builtin(char **args) {
 
 // ==== EXECUTION COMMANDE EXTERNE ==== //
 int shell_launch(char **args) {
+#ifdef _WIN32
     char commandLine[SHELL_BUFFSIZE] = "";
     for (int i = 0; args[i] != NULL; i++) {
         strcat(commandLine, args[i]);
@@ -226,7 +302,26 @@ int shell_launch(char **args) {
     CloseHandle(pi.hThread);
 
     return EXIT_SHELL_SUCCESS;
+#else
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Processus fils
+        if (execvp(args[0], args) == -1) {
+            perror("Erreur");
+        }
+        exit(EXIT_SHELL_ERROR);
+    } else if (pid < 0) {
+        perror("fork");
+        return EXIT_SHELL_ERROR;
+    } else {
+        // Processus parent
+        int status;
+        waitpid(pid, &status, 0);
+        return EXIT_SHELL_SUCCESS;
+    }
+#endif
 }
+
 
 
 // ==== SPLIT DE LA LIGNE ==== //
@@ -313,7 +408,11 @@ void shell_loop(void) {
     int status;
 
     do {
+#ifdef _WIN32
         GetCurrentDirectory(MAX_PATH, cwd);
+#else
+        getcwd(cwd, sizeof(cwd));
+#endif
         printf("\033[0;35m%s\033[0m$ ", cwd);
         line = shell_read_line();
         args = shell_split_line(line);
@@ -321,14 +420,13 @@ void shell_loop(void) {
         int ret = shell_execute_builtin(args);
 
         if (ret == -1) {
-            // Pas une commande interne → tentative externe
             ret = shell_launch(args);
         }
 
         if (ret == EXIT_SHELL_FAILURE) {
-            status = 0; // Quitter la boucle
+            status = 0;
         } else {
-            status = 1; // Continuer
+            status = 1;
         }
 
         for (int i = 0; args[i] != NULL; i++) {
@@ -339,14 +437,13 @@ void shell_loop(void) {
     } while (status);
 }
 
+
 void load_env() {
-    if(strcmp(OS,"LINUX")==0) {
+    if (strcmp(OS, "UNIX") == 0) {
         ENV_HOME = getenv("HOME");
     } else {
         ENV_HOME = getenv("USERPROFILE");
     }
-
-    
 }
 
 // ==== MAIN ==== //

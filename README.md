@@ -1,4 +1,5 @@
-# winbash
+# STASH
 ----
 
-## A Bash-like experience on Windows systems.
+## The Bash experience on Windows
+
